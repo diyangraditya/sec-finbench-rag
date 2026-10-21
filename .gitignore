@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+data/
+*.egg-info
+
+# Environment and cache variables
+.env
+flashrank_cache/
+
+# Virtual environments
+.venv
+.python-version
+
+# Local Vector & Model Cache
+qdrant_storage/
+flashrank_cache/
+*.sqlite
+*.sqlite3
+

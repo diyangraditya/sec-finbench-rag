@@ -1,0 +1,42 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-maxxing-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+    env_file:
+      - .env
+    volumes:
+      - ./qdrant_storage:/app/qdrant_storage
+      - ./data:/app/data
+      - ./flashrank_cache:/app/flashrank_cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-maxxing-ui
+    restart: unless-stopped
+    command: ["streamlit", "run", "app/streamlit_app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./qdrant_storage:/app/qdrant_storage
+      - ./data:/app/data
+      - ./flashrank_cache:/app/flashrank_cache
+    depends_on:
+      api:
+        condition: service_healthy

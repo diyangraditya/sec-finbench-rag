@@ -1,0 +1,27 @@
+[project]
+name = "rag-maxxing"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "datasets>=5.1.0",
+    "docling>=2.141.0",
+    "fastapi>=0.156.8",
+    "fastembed>=0.9.0",
+    "flashrank>=0.2.10",
+    "google-genai>=2.32.0",
+    "groq>=1.7.0",
+    "numpy>=2.5.4",
+    "pandas==3.0.0",
+    "pydantic>=2.14.1",
+    "pydantic-settings>=2.16.1",
+    "pymupdf>=2.0",
+    "pymupdf4llm>=2.0",
+    "qdrant-client==1.19.0",
+    "rank-bm25>=0.2.2",
+    "requests>=2.32.5",
+    "sqlalchemy>=2.0.30",
+    "streamlit>=1.66.0",
+    "uvicorn>=0.54.0",
+]
