@@ -4,13 +4,14 @@ import requests
 # pyrefly: ignore[missing-import]
 from datasets import load_dataset
 
-DATA_DIR = Path("../data")
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / "data"
 PDF_DIR = DATA_DIR / "raw"
 PDF_DIR.mkdir(parents=True, exist_ok=True)
 
 GITHUB_PDF_BASE_URL = "https://raw.githubusercontent.com/patronus-ai/financebench/main/pdfs"
 
-def download_financebench_subset(max_docs: int = 5):
+def download_financebench_subset(max_docs: int = 20):
     print("Fetching FinanceBench metadata from Hugging Face...")
     ds = load_dataset("PatronusAI/financebench", split="train")
     
@@ -77,4 +78,4 @@ def download_financebench_subset(max_docs: int = 5):
     print(f"Total Ground-Truth Q&A pairs saved to {eval_file}: {len(eval_records)}")
 
 if __name__ == "__main__":
-    download_financebench_subset(max_docs=5)
+    download_financebench_subset(max_docs=20)

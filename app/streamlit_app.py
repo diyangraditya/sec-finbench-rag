@@ -234,11 +234,12 @@ with st.sidebar:
 tab_compare, tab_benchmark = st.tabs(["⚡ Side-by-Side RAG Comparator", "📊 Evaluation Benchmark Report"])
 
 with tab_compare:
-    st.subheader("Select or Enter a FinanceBench Test Query")
+    st.subheader("Select a Benchmark Question or Ask Your Own")
 
-    # Dropdown question selector
-    doc_options = ["(All Companies)"] + sorted(list({item["company"] for item in eval_dataset}))
-    selected_company = st.selectbox("Filter queries by Company", options=doc_options)
+    col_q1, col_q2 = st.columns([1, 2])
+    with col_q1:
+        doc_options = ["(All Companies)"] + sorted(list({item["company"] for item in eval_dataset}))
+        selected_company = st.selectbox("Filter queries by Company", options=doc_options)
 
     filtered_samples = [
         item
@@ -251,24 +252,30 @@ with tab_compare:
         for item in filtered_samples
     ]
 
-    selected_query_label = st.selectbox(
-        "Choose a FinanceBench Question:",
-        options=query_labels,
-        index=0 if query_labels else None,
-    )
+    CUSTOM_OPTION = "✏️ (Custom Question — Type your own below)"
+    options_list = [CUSTOM_OPTION] + query_labels
+
+    with col_q2:
+        selected_query_label = st.selectbox(
+            "Choose a Preset Question (or pick Custom):",
+            options=options_list,
+            index=0,
+            help="Select a preset benchmark question to inspect ground truth, or pick 'Custom Question' to ask anything.",
+        )
 
     selected_sample = None
     default_text = ""
-    if selected_query_label and filtered_samples:
+    if selected_query_label != CUSTOM_OPTION and filtered_samples:
         selected_idx = query_labels.index(selected_query_label)
         selected_sample = filtered_samples[selected_idx]
         default_text = selected_sample["question"]
 
     user_query = st.text_area(
-        "Query:",
+        "Enter Financial Question:",
         value=default_text,
+        placeholder="Type any custom question (e.g. What were Boeing's total liabilities in 2022? Or what are AMD's primary risk factors?)...",
         height=85,
-        help="Edit or type any SEC 10-K financial question.",
+        help="You can ask ANY arbitrary question about the SEC 10-K filings in the database.",
     )
 
     run_btn = st.button("🔍 Run Side-by-Side Comparison", type="primary", use_container_width=True)
@@ -420,7 +427,11 @@ with tab_compare:
                     )
 
         # ----------------- GROUND TRUTH COMPARISON -----------------
-        if selected_sample:
+        is_preset_eval = (
+            selected_sample is not None
+            and user_query.strip().lower() == selected_sample.get("question", "").strip().lower()
+        )
+        if is_preset_eval:
             st.markdown("---")
             gt_pages = selected_sample.get("evidence_pages") or []
             base_hit = any(

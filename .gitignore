@@ -21,3 +21,7 @@ flashrank_cache/
 *.sqlite
 *.sqlite3
 
+# skills 
+.agents/
+.claude/
+

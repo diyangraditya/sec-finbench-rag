@@ -45,6 +45,11 @@ def prioritize_chunks(chunks: list[Chunk], eval_path: Path) -> list[Chunk]:
         except Exception as e:
             logger.warning(f"Could not load eval dataset for prioritization: {e}")
 
+    for c in chunks:
+        doc_page = (c.doc_name, c.page_number)
+        if doc_page in evidence_pages:
+            c.metadata["is_evidence"] = True
+
     def chunk_priority_key(c: Chunk) -> tuple[int, int]:
         doc_page = (c.doc_name, c.page_number)
         if doc_page in evidence_pages:
