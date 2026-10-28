@@ -172,7 +172,7 @@ def generate_markdown_report(
 
     md = f"""# Retrieval Ablation Benchmark: Baseline vs. Production RAG
 
-This benchmark measures deterministic retrieval efficacy across the **FinanceBench SEC 10-K** test suite (30 ground-truth Q&A pairs) without consuming LLM generation quota.
+This benchmark measures deterministic retrieval efficacy across the **FinanceBench SEC 10-K** test suite ({baseline_summary.total_queries} ground-truth Q&A pairs) without consuming LLM generation quota.
 
 ## System Architectures Compared
 
@@ -180,11 +180,11 @@ This benchmark measures deterministic retrieval efficacy across the **FinanceBen
 | :--- | :--- | :--- |
 | **Chunking Strategy** | Naive fixed character window (1000 chars, 100 overlap) | Contextual Markdown sections (tables preserved, header prepended) |
 | **Context Header** | None | `[Document: {{doc_name}} | Page: {{page_num}}]` prepended |
-| **Vector Engine** | Qdrant Cosine Dense (`gemini-embedding-001`, 3072 dim) | Qdrant Cosine Dense (`gemini-embedding-001`, 3072 dim) |
-| **Lexical Search** | None | BM25Okapi over contextual tokens |
-| **Search Fusion** | Top-5 Vector Search directly | Top-20 Dense + Top-20 BM25 via Reciprocal Rank Fusion (RRF, $k=60$) |
-| **Reranking** | None | FlashRank Cross-Encoder (`ms-marco-TinyBERT-L-2-v2`) to Top-5 |
-| **Abstention Guard** | None | Reranker confidence score check (< 0.30 threshold) |
+| **Vector Engine** | FastEmbed Cosine Dense (`{settings.EMBEDDING_MODEL}`, {settings.VECTOR_DIM} dim) | FastEmbed Cosine Dense (`{settings.EMBEDDING_MODEL}`, {settings.VECTOR_DIM} dim) |
+| **Lexical Search** | None | BM25Okapi over contextual tokens (stopword filtered) |
+| **Search Fusion** | Top-{settings.TOP_K_RERANK} Vector Search directly | Top-{settings.TOP_K_RETRIEVAL} Dense + Top-{settings.TOP_K_RETRIEVAL} BM25 via Reciprocal Rank Fusion (RRF, $k={settings.RRF_K}$) |
+| **Reranking** | None | FlashRank Cross-Encoder (`{settings.RERANKER_MODEL_NAME}`) to Top-{settings.TOP_K_RERANK} |
+| **Abstention Guard** | None | Calibrated reranker confidence score check (< {settings.RERANK_SCORE_THRESHOLD:.2f} threshold) |
 
 ---
 

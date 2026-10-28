@@ -297,8 +297,27 @@ class QdrantVectorStore:
 
 class BM25IndexManager:
     """
-    Manages local BM25 lexical index over chunks.
+    Manages local BM25 lexical index over chunks with financial stopword filtering.
     """
+
+    STOPWORDS = {
+        "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are",
+        "aren't", "as", "at", "be", "because", "been", "before", "being", "below", "between", "both",
+        "but", "by", "can", "cannot", "could", "couldn't", "did", "didn't", "do", "does", "doesn't",
+        "doing", "don't", "down", "during", "each", "few", "for", "from", "further", "had", "hadn't",
+        "has", "hasn't", "have", "haven't", "having", "he", "her", "here", "hers", "herself", "him",
+        "himself", "his", "how", "i", "if", "in", "into", "is", "isn't", "it", "its", "itself",
+        "me", "more", "most", "my", "myself", "no", "nor", "not", "of", "off", "on", "once", "only",
+        "or", "other", "our", "ours", "ourselves", "out", "over", "own", "same", "she", "should",
+        "shouldn't", "so", "some", "such", "than", "that", "the", "their", "theirs", "them",
+        "themselves", "then", "there", "these", "they", "this", "those", "through", "to", "too",
+        "under", "until", "up", "very", "was", "wasn't", "we", "were", "weren't", "what", "when",
+        "where", "which", "while", "who", "whom", "why", "with", "won't", "would", "wouldn't",
+        "you", "your", "yours", "yourself", "yourselves",
+        # Question / conversational fillers:
+        "please", "tell", "explain", "state", "give", "find", "calculate", "determine", "show",
+        "report", "reported", "according", "based", "much", "many", "what's", "whats",
+    }
 
     def __init__(self, index_file: Path | None = None):
         self.index_file = index_file or (settings.BM25_INDEX_DIR / "production_bm25.pkl")
@@ -306,9 +325,10 @@ class BM25IndexManager:
         self.chunks: list[Chunk] = []
         self._load_if_exists()
 
-    @staticmethod
-    def tokenize(text: str) -> list[str]:
-        return re.findall(r"\w+", text.lower())
+    @classmethod
+    def tokenize(cls, text: str) -> list[str]:
+        tokens = re.findall(r"\w+", text.lower())
+        return [t for t in tokens if t not in cls.STOPWORDS and (len(t) > 1 or t.isdigit())]
 
     def _load_if_exists(self) -> None:
         if self.index_file.exists():
@@ -329,6 +349,13 @@ class BM25IndexManager:
         with open(self.index_file, "wb") as f:
             pickle.dump({"chunks": self.chunks, "bm25": self.bm25}, f)
         logger.info(f"Saved BM25 index with {len(chunks)} chunks to {self.index_file}")
+
+    def rebuild_index(self) -> None:
+        """Rebuilds and re-saves the BM25 index using the latest tokenization rules."""
+        if not self.chunks:
+            logger.warning("No chunks available to rebuild BM25 index.")
+            return
+        self.build_and_save(self.chunks)
 
     def search(
         self,
@@ -503,12 +530,15 @@ class HybridRetriever:
 
             candidate = chunk_map[cid]
             candidate.raw_score = raw_s
-            vec_s = candidate.vector_score or 0.0
-            # Blend cross-encoder score with dense vector similarity
-            candidate.score = float(np.clip(0.5 * calibrated_s + 0.5 * vec_s, 0.0, 1.0))
+            # Calibrated cross-encoder score represents semantic relevance P(relevant|query, passage)
+            candidate.score = calibrated_s
             scored_candidates.append(candidate)
 
-        scored_candidates.sort(key=lambda c: c.score, reverse=True)
+        # Sort candidates primarily by cross-encoder score, using RRF score as a tiebreaker
+        scored_candidates.sort(
+            key=lambda c: (c.score, c.rrf_score or 0.0),
+            reverse=True,
+        )
         final_chunks: list[RetrievedChunk] = []
         for rank, candidate in enumerate(scored_candidates[:k_final], start=1):
             candidate.rank = rank

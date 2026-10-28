@@ -34,11 +34,11 @@ class Settings(BaseSettings):
     VECTOR_DIM: int = 384  
 
     # Retrieval & Reranker Settings
-    TOP_K_RETRIEVAL: int = 20
+    TOP_K_RETRIEVAL: int = 35
     TOP_K_RERANK: int = 5
     RERANK_SCORE_THRESHOLD: float = 0.30
     RRF_K: int = 60
-    RERANKER_MODEL_NAME: str = "ms-marco-TinyBERT-L-2-v2"
+    RERANKER_MODEL_NAME: str = "ms-marco-MiniLM-L-12-v2"
 
     # Directory Paths
     DATA_DIR: Path = BASE_DIR / "data"
