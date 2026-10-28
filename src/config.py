@@ -30,11 +30,8 @@ class Settings(BaseSettings):
         "qwen/qwen3.8-27b",
         "llama-3.3-70b-versatile",
     ]
-    EMBEDDING_MODEL: str = "gemini-embedding-2"
-    EMBEDDING_FALLBACK_MODELS: list[str] = [
-        "gemini-embedding-2-preview",
-        "gemini-embedding-001",
-    ]
+    EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
+    VECTOR_DIM: int = 384  
 
     # Retrieval & Reranker Settings
     TOP_K_RETRIEVAL: int = 20

@@ -12,11 +12,13 @@ from typing import Any, Literal
 import numpy as np
 from flashrank import Ranker, RerankRequest
 from google import genai
+from google.genai import types
 from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 from rank_bm25 import BM25Okapi
 
+from fastembed import TextEmbedding
 from src.config import settings
 from src.ingestion.parser_and_chunker import Chunk
 
@@ -50,6 +52,7 @@ class EmbeddingManager:
     def __init__(self, db_path: Path | None = None, model: str | None = None):
         self.db_path = db_path or settings.EMBEDDING_CACHE_DB
         self.model = model or settings.EMBEDDING_MODEL
+        self.fastembed_model = TextEmbedding(model_name=self.model)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
         self._client: genai.Client | None = None
@@ -88,21 +91,16 @@ class EmbeddingManager:
         return None
 
     def get_cached_embeddings_bulk(self, texts: list[str]) -> dict[int, list[float]]:
-        """Returns dict of {index_in_texts: embedding} for cached items across compatible 3072-dim models."""
+        """Returns dict of {index_in_texts: embedding} for cached items."""
         results: dict[int, list[float]] = {}
-        # Candidate models to search in cache
-        candidate_models = [self.model, "gemini-embedding-001", "gemini-embedding-2", "gemini-embedding-2-preview"]
-
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             for i, t in enumerate(texts):
-                for m in candidate_models:
-                    h = self._hash_text(t, m)
-                    cursor.execute("SELECT embedding FROM embeddings WHERE hash = ?", (h,))
-                    row = cursor.fetchone()
-                    if row:
-                        results[i] = json.loads(row[0])
-                        break
+                h = self._hash_text(t, self.model)
+                cursor.execute("SELECT embedding FROM embeddings WHERE hash = ?", (h,))
+                row = cursor.fetchone()
+                if row:
+                    results[i] = json.loads(row[0])
 
         return results
 
@@ -122,85 +120,33 @@ class EmbeddingManager:
             )
             conn.commit()
 
-    def embed_texts(self, texts: list[str], batch_size: int = 100) -> list[list[float]]:
+    def embed_texts(self, texts: list[str], batch_size: int = 64) -> list[list[float]]:
         """
-        Embeds a list of texts with disk caching, cross-model reuse, and rate-limit aware batching.
+        Embeds a list of texts using local FastEmbed model with disk caching.
+        Runs locally at ~250 chunks/sec with 0 API calls or rate limits.
         """
         if not texts:
             return []
 
-        # 1. Check disk cache first (checks all 3072-dim models)
+        # 1. Check disk cache first
         cached = self.get_cached_embeddings_bulk(texts)
         missing_indices = [i for i in range(len(texts)) if i not in cached]
 
         if not missing_indices:
             return [cached[i] for i in range(len(texts))]
 
-        logger.info(
-            f"Embedding {len(texts)} texts: {len(cached)} cached, {len(missing_indices)} to fetch via API"
-        )
+        missing_texts = [texts[idx] for idx in missing_indices]
 
-        client = self._get_client()
+        # 2. Fast local batch embedding on CPU via ONNX
+        embs_gen = self.fastembed_model.embed(missing_texts, batch_size=batch_size)
+        new_embeddings = [e.tolist() for e in embs_gen]
 
-        # 2. Batch requests for uncached texts
-        for i in range(0, len(missing_indices), batch_size):
-            batch_idxs = missing_indices[i : i + batch_size]
-            batch_texts = [texts[idx] for idx in batch_idxs]
+        # 3. Save to disk cache
+        pairs_to_save = list(zip(missing_texts, new_embeddings))
+        self.save_embeddings_bulk(pairs_to_save)
 
-            # Retry loop with model fallback and exponential backoff
-            max_retries = 6
-            embeddings = None
-            models_to_try = [self.model] + [
-                m for m in getattr(settings, "EMBEDDING_FALLBACK_MODELS", []) if m != self.model
-            ]
-
-            for active_model in models_to_try:
-                self.model = active_model
-                for attempt in range(max_retries):
-                    try:
-                        response = client.models.embed_content(
-                            model=self.model,
-                            contents=batch_texts,
-                        )
-                        embeddings = [e.values for e in response.embeddings]
-                        break
-                    except Exception as e:
-                        err_str = str(e).lower()
-                        # If daily quota exceeded on this model, switch to fallback model immediately
-                        if "perday" in err_str or "daily" in err_str:
-                            logger.warning(
-                                f"Embedding model {self.model} hit daily quota, switching to next fallback model..."
-                            )
-                            break
-
-                        if "429" in err_str or "quota" in err_str or "unavailable" in err_str or "503" in err_str or "resource_exhausted" in err_str:
-                            wait_match = re.search(r"retry in ([\d\.]+)s", err_str)
-                            if wait_match:
-                                wait_sec = float(wait_match.group(1)) + 2.0
-                            else:
-                                wait_sec = max(30.0, float((2**attempt) * 5))
-
-                            logger.warning(
-                                f"Embedding API quota/rate-limit on {self.model} (attempt {attempt + 1}/{max_retries}), pausing {wait_sec:.1f}s: {e}"
-                            )
-                            time.sleep(wait_sec)
-                        else:
-                            logger.error(f"Embedding error on {self.model}: {e}")
-                            raise e
-
-                if embeddings is not None:
-                    break
-
-            # Save newly fetched embeddings to disk cache immediately
-            pairs_to_save = list(zip(batch_texts, embeddings))
-            self.save_embeddings_bulk(pairs_to_save)
-
-            for idx, emb in zip(batch_idxs, embeddings):
-                cached[idx] = emb
-
-            # Pacing to stay comfortably within free tier limits (~15 RPM)
-            if i + batch_size < len(missing_indices):
-                time.sleep(2.0)
+        for idx, emb in zip(missing_indices, new_embeddings):
+            cached[idx] = emb
 
         return [cached[i] for i in range(len(texts))]
 
@@ -216,7 +162,7 @@ class QdrantVectorStore:
 
     BASELINE_COLLECTION = "baseline_chunks"
     PRODUCTION_COLLECTION = "production_chunks"
-    VECTOR_DIM = 3072
+    VECTOR_DIM = getattr(settings, "VECTOR_DIM", 384)
 
     def __init__(self, path: str | None = None):
         self.path = path or settings.QDRANT_STORAGE_PATH

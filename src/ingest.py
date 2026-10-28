@@ -103,7 +103,7 @@ def run_full_ingestion(max_chunks: int | None = None, eval_priority_only: bool =
     retriever.bm25_mgr.build_and_save(prioritized_contextual)
 
     # Step 4: Incrementally Embed and Upsert Production Contextual Chunks
-    batch_size = 100
+    batch_size = 50
     total_prod = len(prioritized_contextual)
     logger.info(f"Embedding and indexing {total_prod} production contextual chunks into Qdrant in batches of {batch_size}...")
 
