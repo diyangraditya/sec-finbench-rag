@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     VECTOR_DIM: int = 384  
 
     # Retrieval & Reranker Settings
-    TOP_K_RETRIEVAL: int = 35
+    TOP_K_RETRIEVAL: int = 25
     TOP_K_RERANK: int = 5
     RERANK_SCORE_THRESHOLD: float = 0.30
     RRF_K: int = 60

@@ -41,6 +41,7 @@ class RetrievedChunk(BaseModel):
     bm25_score: float | None = None
     rank: int = 1
     metadata: dict[str, Any] = Field(default_factory=dict)
+    section: str = "General"
 
 
 class EmbeddingManager:
@@ -247,18 +248,39 @@ class QdrantVectorStore:
         collection_name: str,
         query_vector: list[float],
         limit: int = 20,
-        doc_name: str | None = None,
+        doc_name: str | list[str] | set[str] | None = None,
     ) -> list[RetrievedChunk]:
         query_filter = None
         if doc_name:
-            query_filter = qmodels.Filter(
-                must=[
-                    qmodels.FieldCondition(
-                        key="doc_name",
-                        match=qmodels.MatchValue(value=doc_name),
+            if isinstance(doc_name, (list, tuple, set)):
+                doc_list = list(doc_name)
+                if len(doc_list) == 1:
+                    query_filter = qmodels.Filter(
+                        must=[
+                            qmodels.FieldCondition(
+                                key="doc_name",
+                                match=qmodels.MatchValue(value=doc_list[0]),
+                            )
+                        ]
                     )
-                ]
-            )
+                elif len(doc_list) > 1:
+                    query_filter = qmodels.Filter(
+                        must=[
+                            qmodels.FieldCondition(
+                                key="doc_name",
+                                match=qmodels.MatchAny(any=doc_list),
+                            )
+                        ]
+                    )
+            else:
+                query_filter = qmodels.Filter(
+                    must=[
+                        qmodels.FieldCondition(
+                            key="doc_name",
+                            match=qmodels.MatchValue(value=str(doc_name)),
+                        )
+                    ]
+                )
 
         client = self._get_client()
         try:
@@ -275,6 +297,7 @@ class QdrantVectorStore:
         results: list[RetrievedChunk] = []
         for rank, hit in enumerate(hits, start=1):
             p = hit.payload or {}
+            meta = p.get("metadata", {})
             results.append(
                 RetrievedChunk(
                     id=p.get("chunk_id", str(hit.id)),
@@ -288,7 +311,8 @@ class QdrantVectorStore:
                     score=float(hit.score) if hit.score is not None else 0.0,
                     vector_score=float(hit.score) if hit.score is not None else 0.0,
                     rank=rank,
-                    metadata=p.get("metadata", {}),
+                    metadata=meta,
+                    section=meta.get("section", "General"),
                 )
             )
 
@@ -361,7 +385,7 @@ class BM25IndexManager:
         self,
         query: str,
         limit: int = 20,
-        doc_name: str | None = None,
+        doc_name: str | list[str] | set[str] | None = None,
     ) -> list[RetrievedChunk]:
         if not self.bm25 or not self.chunks:
             return []
@@ -369,11 +393,18 @@ class BM25IndexManager:
         tokens = self.tokenize(query)
         scores = self.bm25.get_scores(tokens)
 
+        allowed_docs = None
+        if doc_name:
+            if isinstance(doc_name, (list, tuple, set)):
+                allowed_docs = set(doc_name)
+            else:
+                allowed_docs = {doc_name}
+
         # Pair scores with chunks
         indexed_scores = []
         for i, score in enumerate(scores):
             chunk = self.chunks[i]
-            if doc_name and chunk.doc_name != doc_name:
+            if allowed_docs and chunk.doc_name not in allowed_docs:
                 continue
             indexed_scores.append((score, chunk))
 
@@ -396,6 +427,7 @@ class BM25IndexManager:
                     bm25_score=float(score),
                     rank=rank,
                     metadata=chunk.metadata,
+                    section=chunk.metadata.get("section", "General"),
                 )
             )
 
@@ -423,24 +455,19 @@ class HybridRetriever:
     @staticmethod
     def _calibrate_flashrank_score(raw_score: float) -> float:
         """
-        Calibrates FlashRank raw probability score:
-        MS-MARCO pairwise cross-encoder raw scores sit around 2e-5 for noise
-        and scale up to ~0.05-0.90 for high relevance.
-        This maps:
-          noise floor (~2e-5) -> ~0.17 (< 0.30 threshold, abstains)
-          meaningful signal (~1e-4) -> ~0.38 (> 0.30 threshold, accepted)
-          strong signal (>= 0.01) -> ~0.93 - 0.99
+        With ms-marco-MiniLM-L-12-v2, raw scores from FlashRank are already normalized
+        sigmoid relevance probabilities in [0.0, 1.0].
+        Relevant financial passages score >= 0.30 (typically 0.70 - 0.99).
+        Irrelevant noise queries score < 0.05 (typically < 0.001), correctly triggering
+        the abstention guardrail threshold (0.30).
         """
-        raw_score = max(1e-9, min(1.0 - 1e-9, float(raw_score)))
-        logit = math.log(raw_score / (1.0 - raw_score))
-        calibrated = 1.0 / (1.0 + math.exp(-(logit + 8.5) / 1.5))
-        return float(np.clip(calibrated, 0.0, 1.0))
+        return float(np.clip(float(raw_score), 0.0, 1.0))
 
     def baseline_search(
         self,
         query: str,
         limit: int | None = None,
-        doc_name: str | None = None,
+        doc_name: str | list[str] | set[str] | None = None,
     ) -> list[RetrievedChunk]:
         """Baseline mode: Dense Vector Search only over naive chunks."""
         k = limit or settings.TOP_K_RERANK
@@ -457,7 +484,7 @@ class HybridRetriever:
         query: str,
         limit: int | None = None,
         top_k_retrieval: int | None = None,
-        doc_name: str | None = None,
+        doc_name: str | list[str] | set[str] | None = None,
     ) -> list[RetrievedChunk]:
         """
         Production mode:
@@ -550,7 +577,7 @@ class HybridRetriever:
         self,
         query: str,
         mode: Literal["baseline", "production"] = "production",
-        doc_name: str | None = None,
+        doc_name: str | list[str] | set[str] | None = None,
         limit: int | None = None,
     ) -> list[RetrievedChunk]:
         if mode == "baseline":
