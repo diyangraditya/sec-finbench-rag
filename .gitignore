@@ -24,4 +24,4 @@ flashrank_cache/
 # skills 
 .agents/
 .claude/
-
+.streamlit/
